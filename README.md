@@ -1,8 +1,24 @@
 # pash
 
-A simple password manager using GPG written in POSIX `sh`.
+`pash` is a password manager for the command line. Each password is a GnuPG-encrypted file in a directory you control. The password manager is a single POSIX `sh` script, so you can read every branch it takes. An optional Bash helper, `pashmenu`, picks an entry with `dmenu`.
 
-```
+It exists for people who want a small shell password manager: no `eval` on user input, a short code path, and GPG for encryption. Version `2.3.0` is the version the script prints. This repository is Saif Salih's copy of `pash`.
+
+## Features
+
+- `add`, `show`, `copy`, `del`, `list`, and `tree` for entries stored as `<name>.gpg`.
+- Names with slashes become directories (`dev/github` is `dev/github.gpg`).
+- Generate a password from `/dev/urandom`, or type one twice with echo turned off.
+- Encrypt to a GPG key (`PASH_KEYID`) or with a symmetric passphrase.
+- Copy an entry with a clipboard command, then run that command on empty input after a timeout.
+- Optional `pashmenu` launcher: pick an entry in `dmenu` and copy it.
+- Extend the command set with an ordinary shell function.
+
+## Example
+
+Entries are files in the store. A store with a few names looks like this:
+
+```text
 pash
 ├─ dev/
 │  ├─ github
@@ -13,180 +29,141 @@ pash
 └──┘
 ```
 
-## Table of Contents
+`pash list` prints those names one per line (`dev/github`, `internet/nixers`, …). `pash tree` prints the same store through the `tree` command, with `.gpg` removed from the file names. This repository has no screenshots.
 
-<!-- vim-markdown-toc GFM -->
+## Prerequisites
 
-* [Dependencies](#dependencies)
-* [Usage](#usage)
-* [FAQ](#faq)
-    * [How does this differ from `pass` or etc?](#how-does-this-differ-from-pass-or-etc)
-    * [Where are passwords stored?](#where-are-passwords-stored)
-    * [How can I use a public key?](#how-can-i-use-a-public-key)
-    * [How do I set the password length?](#how-do-i-set-the-password-length)
-    * [How do I change the password store location?](#how-do-i-change-the-password-store-location)
-    * [How do I change the clipboard tool?](#how-do-i-change-the-clipboard-tool)
-    * [How do I change the clipboard timeout?](#how-do-i-change-the-clipboard-timeout)
-    * [How do I change the password generation pattern?](#how-do-i-change-the-password-generation-pattern)
-    * [How do I rename an entry?](#how-do-i-rename-an-entry)
-    * [How can I migrate from `pass` to `pash`?](#how-can-i-migrate-from-pass-to-pash)
-    * [How can I extend `pash`?](#how-can-i-extend-pash)
+For `pash`:
 
-<!-- vim-markdown-toc -->
-
-## Dependencies
-
+- POSIX `sh` (`#!/bin/sh`)
 - `gpg` or `gpg2`
+- a terminal, for `add` and `del`
 
-**Clipboard Support**:
+For clipboard copy, a clipboard program. The default is `xclip`. For `pash tree`, the `tree` command.
 
-- `xclip` (*can be customized through `PASH_CLIP`*).
+For the optional `pashmenu` helper:
 
+- Bash
+- `dmenu` on X11, or `dmenu-wl` on Wayland
+- `pash` on `PATH`
+
+`pashmenu --type` also looks for `xdotool` (X11) or `ydotool` (Wayland). That mode currently types nothing; see [pashmenu](#pashmenu).
+
+## Install
+
+Clone the repository and copy the scripts onto `PATH`:
+
+```sh
+git clone https://github.com/saifsal/pash.git
+cd pash
+mkdir -p ~/.local/bin
+cp pash pashmenu ~/.local/bin/
+chmod 755 ~/.local/bin/pash ~/.local/bin/pashmenu
+```
+
+`~/.local/bin` needs to be on `PATH`. Skip `pashmenu` if you only want the shell script. From the clone, `./pash` runs without installing.
+
+Every subcommand creates that directory. `pash` alone and `pash -?` only print help:
+
+```text
+${PASH_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/pash}
+```
+
+When `XDG_DATA_HOME` is unset, that is `~/.local/share/pash`.
 
 ## Usage
 
-Examples: `pash add web/gmail`, `pash list`, `pash del google`, `pash show github`, `pash copy github`.
-
-```
-SYNOPSIS
-
-pash [ add|del|show|list|copy ] [name]
-
-COMMANDS
-
-[a]dd  [name] - Create a new password entry.
-[c]opy [name] - Copy entry to the clipboard.
-[d]el  [name] - Delete a password entry.
-[l]ist        - List all entries.
-[s]how [name] - Show password for an entry.
-[t]ree        - List all entries in a tree.
-
-OPTIONS
-
-Using a key pair:  export PASH_KEYID=XXXXXXXX
-Password length:   export PASH_LENGTH=50
-Password pattern:  export PASH_PATTERN=_A-Z-a-z-0-9
-Store location:    export PASH_DIR=~/.local/share/pash
-Clipboard tool:    export PASH_CLIP='xclip -sel c'
-Clipboard timeout: export PASH_TIMEOUT=15 ('off' to disable)
+```text
+pash [ add|del|show|list|copy|tree ] [name]
 ```
 
-## FAQ
+| Command | What it does |
+| --- | --- |
+| `pash add <name>` | Create `<name>.gpg`. Asks whether to generate a password. |
+| `pash show <name>` | Print the decrypted entry. |
+| `pash copy <name>` | Write the entry to the clipboard, then clear it after the timeout. |
+| `pash del <name>` | Ask `y/n`, then delete the entry. |
+| `pash list` | Print every entry name. |
+| `pash tree` | Print the store as a tree. Requires `tree`. |
 
-### How does this differ from `pass` or etc?
-
-I was looking for a CLI password manager (*written in shell*) and wasn't happy with the options I had found. They either had multiple instances of `eval` (*on user inputted data*), lots of unsafe shell (*nowhere near being `shellcheck` compliant.*) or they were overly complex. The opposites for what I'd want in a password manager.
-
-I decided to write my own. `pash` is written in POSIX `sh` and the codebase is minimal (*120~ LOC minus blank lines and comments*).
-
-### Where are passwords stored?
-
-The passwords are stored in GPG encrypted files located at `${XDG_DATA_HOME:=$HOME/.local/share}/pash}`.
-
-
-### How can I use a public key?
-
-Set the environment variable `PASH_KEYID` to the ID of the key you'd like to encrypt and decrypt passwords with.
-
-Example:
+The first letter is enough: `pash a`, `pash c`, `pash d`, `pash s`, `pash l`, and `pash t` call the same commands.
 
 ```sh
-# Default: 'unset'.
+pash add dev/github
+pash list
+pash show dev/github
+pash copy dev/github
+pash del dev/github
+```
+
+`add` and `del` read a single `y` or `n` without waiting for Enter. Generating a password can print `tr: write error: Broken pipe` on stderr. `dd` stops reading after `PASH_LENGTH` bytes. The entry was still written when the next line is `Saved '…' to the store.`
+
+`copy` prints `Clearing clipboard in "15" seconds.` and waits for that timeout before it exits. The clipboard command runs immediately; the wait is the clear timer. Disable it with `PASH_TIMEOUT=off`.
+
+`show` and `copy` print or copy the stored bytes. A password created by `pash` includes a trailing newline.
+
+To rename an entry, rename the file:
+
+```sh
+mv ~/.local/share/pash/old.gpg ~/.local/share/pash/new.gpg
+```
+
+`pash` with no arguments, or `pash -?`, prints the built-in help and exits 1.
+
+## Configuration
+
+Set these in the environment. A one-off prefix (`PASH_LENGTH=10 pash add github`) works the same way.
+
+| Variable | Default | Role |
+| --- | --- | --- |
+| `PASH_DIR` | `$XDG_DATA_HOME/pash` or `~/.local/share/pash` | Store directory. |
+| `PASH_KEYID` | unset | Recipient for `gpg --trust-model always -aer`. Unset means symmetric `gpg -c`, which asks for a passphrase. A key id or an email both work. |
+| `PASH_LENGTH` | `50` | Generated password length, in bytes. |
+| `PASH_PATTERN` | `_A-Z-a-z-0-9` | Character set passed to `tr -dc`. |
+| `PASH_CLIP` | `xclip -sel c` | Command that reads the secret on stdin. Word-split on purpose. |
+| `PASH_TIMEOUT` | `15` | Seconds before the clipboard command is run again with an empty stdin. `off` skips the clear. |
+
+```sh
 export PASH_KEYID=XXXXXXXX
-
-# This can also be an email.
-export PASH_KEYID=dylan.araps@gmail.com
-
-# This can also be used as a one-off.
-PASH_KEYID=XXXXXXXX pash add github
-```
-
-### How do I set the password length?
-
-Set the environment variable `PASH_LENGTH` to a valid integer.
-
-Example:
-
-```sh
-# Default: '50'.
 export PASH_LENGTH=50
-
-# This can also be used as a one-off.
-PASH_LENGTH=10 pash add github
-```
-
-### How do I change the password store location?
-
-Set the environment variable `PASH_DIR` to a directory.
-
-```sh
-# Default: '~/.local/share/pash'.
+export PASH_PATTERN='_A-Z-a-z-0-9'
 export PASH_DIR=~/.local/share/pash
-
-# This can also be used as a one-off.
-PASH_DIR=/mnt/drive/pash pash list
-```
-
-### How do I change the clipboard tool?
-
-Set the environment variable `PASH_CLIP` to a command.
-
-```sh
-# Default: 'xclip -sel c'.
 export PASH_CLIP='xclip -sel c'
-
-# This can also be used as a one-off.
-PASH_CLIP='xclip -sel c' pash copy github
-```
-
-### How do I change the clipboard timeout?
-
-Set the environment variable `PASH_TIMEOUT` to a valid `sleep` interval or `off` to disable the feature.
-
-```sh
-# Default: '15'
 export PASH_TIMEOUT=15
-
-# Disable timeout.
-export PASH_TIMEOUT=off
-
-# This can also be used as a one-off.
-PASH_TIMEOUT=5 pash copy github
 ```
 
-### How do I change the password generation pattern?
+`xclip -sel c` writes the X CLIPBOARD selection. A desktop clipboard manager may record that selection even after `pash` clears it. `PASH_CLIP` can be any command that reads stdin, for example a different `xclip` selection or `wl-copy`.
 
-Set the environment variable `PASH_PATTERN` to a valid `tr` string.
+Encrypted files are created mode `0600`. The store directory itself uses your normal umask (`0755` when the umask is `022`).
+
+## pashmenu
+
+`pashmenu` lists every `*.gpg` file under the store and feeds the names to `dmenu`. Choosing one runs `pash copy` on it.
 
 ```sh
-# Default: '_A-Z-a-z-0-9'.
-export PASH_PATTERN=_A-Z-a-z-0-9
-
-# This can also be used as a one-off.
-PASH_PATTERN=_A-Z-a-z-0-9 pash add hackernews
+pashmenu
+pashmenu -i -l 20          # extra arguments are passed to dmenu
 ```
 
-### How do I rename an entry?
+It uses `dmenu-wl` when `WAYLAND_DISPLAY` is set, and `dmenu` when `DISPLAY` is set. With neither set it exits 1 and prints `Error: No Wayland or X11 display detected`.
 
-It's a file! Standard UNIX utilities can be used here.
+Its default directory is `~/.local/share/pash` when `PASH_DIR` is unset. It does not read `XDG_DATA_HOME`. Export `PASH_DIR` if `pash` is using a different store.
 
+`pashmenu --type` is meant to type the password with `xdotool` or `ydotool`. The script reads the decrypted password into the wrong variable and types an empty string, so `--type` does not insert the password.
 
-### How can I migrate from `pass` to `pash`?
+## Migrating from pass
 
-I cannot guarantee 100% compatibility with the stores from `pass` as `pash` wasn't written as a 1:1 replacement, however users have reported that `pash` does in fact work fine with `pass`' store.
+`pash` is not a tested drop-in replacement for [`pass`](https://www.passwordstore.org/). The layout is the same idea (one `.gpg` file per entry, a `.gpg-id` file in a `pass` store). To try an existing store, set the directory before reading the key id:
 
-Add the following to your `.shellrc` or `.profile`.
-
-```
-read -r PASH_KEYID < "$PASH_DIR/.gpg-id"
-
+```sh
 export PASH_DIR=${PASSWORD_STORE_DIR:-$HOME/.password-store}
+read -r PASH_KEYID < "$PASH_DIR/.gpg-id"
 export PASH_KEYID
 ```
 
-### How can I extend `pash`?
+## Extending
 
-A shell function can be used to add new commands and functionality to `pash`. The following example adds `pash git` to execute `git` commands on the password store.
+A shell function can add commands. This one handles `pash git …` inside the store and forwards everything else to the real script:
 
 ```sh
 pash() {
@@ -196,10 +173,38 @@ pash() {
             shift
             git "$@"
         ;;
-
         *)
             command pash "$@"
         ;;
     esac
 }
 ```
+
+The `g*` pattern matches any argument that starts with `g`, including `git`.
+
+## Development and testing
+
+There is no build and no test suite. From a clone:
+
+```sh
+sh -n pash
+bash -n pashmenu
+shellcheck -s sh pash
+shellcheck -s bash pashmenu
+```
+
+`sh -n` and `bash -n` exit 0. ShellCheck 0.9.0 reports one info (SC2086) in `pash`, and warnings in `pashmenu` (including the `--type` variable mix-up). `shellcheck -S warning -s sh pash` exits 0.
+
+To exercise GPG, use a temporary `GNUPGHOME` and `PASH_DIR`. The exact smoke test, and the rules for changing the scripts, are in [AGENTS.md](AGENTS.md).
+
+`pash` is POSIX `sh` with four-space indentation. The password heredoc in `pw_add` is tab-indented because `<<-EOF` strips tabs. `pashmenu` is Bash with tab indentation. Keep those separate.
+
+## Project status
+
+The script identifies itself as `pash 2.3.0`. There is no changelog and no roadmap. The password manager commands are in place and can be run as documented above. There is no CI.
+
+`pashmenu` can copy a selected entry. Its `--type` flag does not type the password.
+
+## Licence
+
+[MIT License](LICENSE.md). Copyright (c) 2016–2019 Dylan Araps. Copyright (c) 2022 Saif Salih.
